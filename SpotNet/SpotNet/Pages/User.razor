@@ -1,0 +1,153 @@
+﻿@page "/user"
+@inject NavigationManager navManager
+@using SpotNet.Models
+@using SpotifyAPI.Web
+
+
+@if (_isAuthed && _me != null)
+{
+    <div class="d-flex flex-column justify-content-around text-center welcome-text">
+        <h1>Welcome @_me.DisplayName!</h1>
+        <p>
+            You have a grant total of @_totalPlaylistCount playlists!
+        </p>
+        <p>Click the <img src="regen.png" style="width:15px;"> button to generate a playlist based on your top arists or tracks.</p>
+        <p>Click the <img src="cog.png" style="width:15px;"> button to generate playlists from other seeds.</p>
+    </div>
+
+    <div class="d-flex flex-row justify-content-around m-4">
+
+        @if (topTracks != null)
+        {
+            <div class="card top-card">
+                <div class="card-header d-flex flex-row justify-content-around">
+                    <h3>Top Tracks</h3>
+                </div>
+                <div class="card-body">
+                    <a class="btn btn-primary position-absolute float-end" href=@trackGenerateLink><img src="regen.png" /></a>
+                    <div class="text-center flex-column d-flex justify-content-around align-items-around">
+                        @foreach (var track in topTracks)
+                        {
+                            <p class="m-2"><b>@track.Name</b> by <b>@track.Artists[0].Name</b></p>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (topArtists != null)
+        {
+            <div class="card top-card">
+                <div class="card-header d-flex flex-row justify-content-around">
+                    <h3>Top Artists</h3>
+                </div>
+                <div class="card-body">
+                    <a class="btn btn-primary position-absolute float-end" href=@artistGenerateLink><img src="regen.png" /></a>
+                    <div class="text-center flex-column d-flex justify-content-around align-items-around">
+                        @foreach (var track in topArtists)
+                        {
+                            <p><b>@track.Name</b></p>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+    </div>
+}
+else
+{
+    <div class="d-flex align-items-center justify-content-center h-100">
+        <div class="spinner-grow text-primary" role="status">
+            <span class="sr-only">Loading...</span>
+        </div>
+    </div>
+}
+@code {
+
+    private PrivateUser _me;
+    private string _accessToken;
+    private string trackGenerateLink;
+    private string artistGenerateLink;
+    bool _isAuthed; 
+    private int? _totalPlaylistCount;
+    List<Track> topTracks = new List<Track>();
+    List<Artist> topArtists = new List<Artist>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(navManager.Uri);
+        var maxLen = Math.Min(1, uri.Fragment.Length);
+        Dictionary<string, string> fragmentParams = uri.Fragment.Substring(maxLen)?
+          .Split("&", StringSplitOptions.RemoveEmptyEntries)?
+          .Select(param => param.Split("=", StringSplitOptions.RemoveEmptyEntries))?
+          .ToDictionary(param => param[0], param => param[1]) ?? new Dictionary<string, string>();
+
+        _isAuthed = fragmentParams.ContainsKey("access_token");
+        if (_isAuthed)
+        {
+            _accessToken = fragmentParams["access_token"];
+            var spotify = new SpotifyClient(fragmentParams["access_token"]);
+
+            _me = await spotify.UserProfile.Current();
+            _totalPlaylistCount = (await spotify.Playlists.CurrentUsers()).Total;
+            var tracks = await spotify.Personalization.GetTopTracks();
+            var artists = await spotify.Personalization.GetTopArtists();
+
+            foreach(var track in tracks.Items)
+            {
+
+                topTracks.Add(new Track()
+                    {
+                        Name = track.Name,
+                        Id = track.Id,
+                        Artists = new List<Artist>() {
+                            new Artist() {
+                                Name = track.Artists[0].Name,
+                                Id = track.Artists[0].Id
+                            }
+                        },
+                        Album = new Album()
+                        {
+                            Name = track.Album.Name,
+                            Id = track.Id
+                        },
+                    });
+            }
+
+            trackGenerateLink = $"/generated#access_token={_accessToken}&&seed_tracks=";
+            for (int i = 0; i < 4; i++){
+                var r = new Random();
+                trackGenerateLink += $"{topTracks[r.Next(0,topTracks.Count-1)].Id},";
+            }
+            trackGenerateLink = trackGenerateLink.Remove(trackGenerateLink.Length - 1);
+
+            
+            foreach(var artist in artists.Items)
+            {
+                topArtists.Add(new Artist()
+                {
+                    Name = artist.Name,
+                    Id = artist.Id
+                });
+            }
+            artistGenerateLink = $"/generated#access_token={_accessToken}&&seed_artists=";
+            for (int i = 0; i < 4; i++)
+            {
+                var r = new Random();
+                artistGenerateLink += $"{topArtists[r.Next(0, topArtists.Count - 1)].Id},";
+            }
+            if (artistGenerateLink.Last() ==',')
+            {
+                artistGenerateLink = artistGenerateLink.Remove(artistGenerateLink.Length - 1);
+            }
+            
+
+        }
+    }
+
+    public async Task GenerateFromTopTracks()
+    {
+
+    }
+}

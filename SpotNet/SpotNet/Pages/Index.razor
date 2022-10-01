@@ -1,0 +1,71 @@
+﻿@page "/"
+@inject NavigationManager navManager
+@using SpotifyAPI.Web
+
+
+
+
+<div class="d-flex flex-column justify-content-center align-items-center login-div page-content">
+    @if (!_isAuthed)
+    {
+        <img src="cog.png" class="login-image"/>
+        <h1 class="text-center">SpotNet</h1>
+        <span>To get started:</span>
+        <a href="@_authUri" class="btn btn-lg btn-primary">
+            Login via Spotify
+        </a>
+    }
+</div>
+
+
+@code {
+    private Uri _authUri;
+
+    private bool _isAuthed;
+
+    private string redirectUri = "https://localhost:7013/user";
+
+    private PrivateUser _me;
+
+    private int? _totalPlaylistCount;
+
+    bool loading;
+
+    protected override void OnInitialized()
+    {
+        var (verifier, challenge) = PKCEUtil.GenerateCodes();
+        var clientId = "0738bb412e5649a8a050961ead6a5a6a";
+        //var clientId = Environment.GetEnvironmentVariable("SPOTIFY_CLIENT_ID");
+        var baseUri = new Uri(redirectUri);
+        //var baseUri = navManager.ToAbsoluteUri(navManager.BaseUri);
+
+        var loginRequest = new LoginRequest(baseUri, clientId, LoginRequest.ResponseType.Token)
+            {
+                CodeChallengeMethod = "S256",
+                CodeChallenge = challenge,
+                Scope = new[] { Scopes.PlaylistReadCollaborative, Scopes.PlaylistModifyPrivate, Scopes.PlaylistModifyPublic, Scopes.UserLibraryModify, Scopes.UserLibraryModify,Scopes.UserTopRead}
+            };
+        _authUri = loginRequest.ToUri();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(navManager.Uri);
+        var maxLen = Math.Min(1, uri.Fragment.Length);
+        Dictionary<string, string> fragmentParams = uri.Fragment.Substring(maxLen)?
+          .Split("&", StringSplitOptions.RemoveEmptyEntries)?
+          .Select(param => param.Split("=", StringSplitOptions.RemoveEmptyEntries))?
+          .ToDictionary(param => param[0], param => param[1]) ?? new Dictionary<string, string>();
+
+        _isAuthed = fragmentParams.ContainsKey("access_token");
+        if (_isAuthed)
+        {
+            var spotify = new SpotifyClient(fragmentParams["access_token"]);
+
+            loading = true;
+            _me = await spotify.UserProfile.Current();
+            _totalPlaylistCount = (await spotify.Playlists.CurrentUsers()).Total;
+            loading = false;
+        }
+    }
+}

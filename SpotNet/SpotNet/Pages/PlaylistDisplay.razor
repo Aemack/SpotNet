@@ -1,0 +1,123 @@
+﻿@page "/playlist"
+@using SpotNet.Models
+@using SpotifyAPI.Web
+@using SpotNet.Services
+
+@inject NavigationManager navManager;
+
+@if (!string.IsNullOrWhiteSpace(playlist.Name)){
+    <h3 class="text-center welcome-text">
+        @playlist.Name
+    </h3>
+}
+
+@if (playlist.Tracks != null)
+{
+    <div class="d-flex dlex-row justify-content-center align-items-center m-3">
+        <a href="@GeneratePlaylistUrl()" class="btn-primary btn m-auto small-shadow">Generate Playlist</a>
+    </div>
+    <div class="d-flex flex-row align-items-center flex-wrap justify-content-around">
+        @foreach (var tr in playlist.Tracks)
+        {
+            <div class="card m-2 w-25 h-25 text-center">
+                <img class="card-img-top" src="@tr.Album.ImageUrl">
+                <div class="card-body">
+                <p>@tr.Name</p>
+                <p>@tr.Artists[0].Name</p>
+                <p>@tr.Album.Name</p>
+                </div>
+            </div>
+        }
+    </div>
+} else 
+{
+    <div class="d-flex align-items-center justify-content-center h-100">
+        <div class="spinner-grow text-primary" role="status">
+            <span class="sr-only">Loading...</span>
+        </div>
+    </div>
+}
+
+@code {
+    private Playlist playlist = new Playlist();
+    private string playlistId = "";
+    SpotifyClient spotify;
+    bool _isAuthed;
+    string _accessToken;
+
+    protected override async Task OnInitializedAsync()
+    {
+
+        var uri = new Uri(navManager.Uri);
+        var maxLen = Math.Min(1, uri.Fragment.Length);
+        Dictionary<string, string> fragmentParams = uri.Fragment.Substring(maxLen)?
+          .Split("&", StringSplitOptions.RemoveEmptyEntries)?
+          .Select(param => param.Split("=", StringSplitOptions.RemoveEmptyEntries))?
+          .ToDictionary(param => param[0], param => param[1]) ?? new Dictionary<string, string>();
+
+        _isAuthed = fragmentParams.ContainsKey("access_token");
+        if (_isAuthed)
+        {
+            _accessToken = fragmentParams["access_token"];
+            playlistId = fragmentParams["id"];
+            spotify = new SpotifyClient(fragmentParams["access_token"]);
+            await GetUserPlaylist();
+        }
+    }
+
+    private async Task GetUserPlaylist()
+    {
+        var playlistJson = await spotify.Playlists.Get(playlistId);
+        playlist.Tracks = new List<Track>();
+        playlist.Name = playlistJson.Name;
+        playlist.Id = playlistJson.Id;
+        var gotEmAll = false;
+        while (!gotEmAll)
+        {
+            foreach (var track in playlistJson.Tracks.Items)
+            {
+                var parsedTrack = (FullTrack)track.Track;
+                if (parsedTrack.IsLocal) continue;
+                var newTrack = new Track();
+                newTrack.Name = parsedTrack.Name;
+                newTrack.Id = parsedTrack.Id;
+                if (parsedTrack.Album != null) newTrack.Album = new Album() { Name = parsedTrack.Album.Name, Id = parsedTrack.Id };
+                if (parsedTrack.Album.Images.Count > 0) newTrack.Album.ImageUrl = parsedTrack.Album.Images[0].Url;
+
+                if (parsedTrack.Artists.Count > 0)
+                {
+                    newTrack.Artists = new List<Artist>();
+                    foreach (var art in parsedTrack.Artists)
+                    {
+                        newTrack.Artists.Add(new Artist() { Name = art.Name, Id = art.Id });
+                    }
+
+                }
+                playlist.Tracks.Add(newTrack);
+            }
+
+            if (!string.IsNullOrWhiteSpace(playlistJson.Tracks.Next))
+            {
+                playlistJson.Tracks = await spotify.NextPage(playlistJson.Tracks);
+            }
+            else
+            {
+                gotEmAll = true;
+            }
+        }
+    }
+
+    public string GeneratePlaylistUrl()
+    {
+        var r = new Random();
+        string seedIdsString = "";
+        for(int i = 0; i < 4; i++)
+        {
+            seedIdsString += playlist.Tracks[r.Next(0, playlist.Tracks.Count - 1)].Id;
+            if (i < 4) seedIdsString += ",";
+        }
+
+
+        return $"generated#access_token={_accessToken}&&playlist_id={playlist.Id}&&seed_tracks=" + seedIdsString;
+    }
+}

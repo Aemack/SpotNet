@@ -1,0 +1,86 @@
+﻿@page "/playlists"
+@using SpotNet.Models
+@using SpotifyAPI.Web
+@inject NavigationManager navManager
+
+<h3 class="text-center welcome-text">Playlists</h3>
+@if (playlists.Count > 0)
+{
+    
+    <div class="d-flex flex-wrap align-items-center">
+        @foreach (var playlist in playlists)
+        {
+
+            <a href="@playlist.GetPlaylistUrl(access_token)" class="card w-25 h-25 m-5 text-decoration-none playlist-link track-display">
+                <img class="card-img-top" src="@playlist.ImageUrl" />
+                <div class="card-body text-center">
+                    <h5>@playlist.Name</h5>
+                </div>
+            </a>
+            
+        }
+    </div>
+} else {
+    <div class="d-flex align-items-center justify-content-center h-100">
+        <div class="spinner-grow text-primary" role="status">
+            <span class="sr-only">Loading...</span>
+        </div>
+    </div>
+}
+
+
+@code {
+
+    bool _isAuthed;
+    private List<Playlist> playlists = new List<Playlist>();
+    string access_token;
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(navManager.Uri);
+        var maxLen = Math.Min(1, uri.Fragment.Length);
+        Dictionary<string, string> fragmentParams = uri.Fragment.Substring(maxLen)?
+          .Split("&", StringSplitOptions.RemoveEmptyEntries)?
+          .Select(param => param.Split("=", StringSplitOptions.RemoveEmptyEntries))?
+          .ToDictionary(param => param[0], param => param[1]) ?? new Dictionary<string, string>();
+
+        _isAuthed = fragmentParams.ContainsKey("access_token");
+        if (_isAuthed)
+        {
+            access_token = fragmentParams["access_token"];
+            var spotify = new SpotifyClient(fragmentParams["access_token"]);
+            await GetUserPlaylists(spotify);
+        }
+    }
+
+    public async Task GetUserPlaylists(SpotifyClient spotify)
+    {
+        var playlistsJson = await spotify.Playlists.CurrentUsers();
+        bool gotEmAll = false;
+
+        while (!gotEmAll)
+        {
+
+            foreach (var playlist in playlistsJson.Items)
+            {
+                var newPlaylist = new Playlist();
+                
+                newPlaylist.Name = playlist.Name;
+                newPlaylist.Id = playlist.Id;
+
+                if (playlist.Images.Count > 0)
+                {
+                    newPlaylist.ImageUrl = playlist.Images[0].Url;
+                }
+                
+                playlists.Add(newPlaylist);
+            }
+
+            if (!string.IsNullOrWhiteSpace(playlistsJson.Next)){
+                playlistsJson = await spotify.NextPage(playlistsJson);
+            } else {
+                gotEmAll = true;
+            }
+        }
+        
+    }
+}

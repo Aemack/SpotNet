@@ -1,0 +1,506 @@
+﻿@page "/generated"
+@using SpotNet.Models
+@using SpotifyAPI.Web
+@inject NavigationManager navManager;
+<!-- Settings Modal -->
+<div class="modal fade" id="settingsModal" tabindex="-1" aria-labelledby="settingsModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content" style="width:700px">
+            <div class="modal-header">
+                <h5 class="modal-title" id="settingsModalLabel">Settings</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body">
+
+                <div class="container">
+                    <div class="row justify-content-center align-items-center text-center">
+
+                        <span class="text-capitalize col-4">Size</span>
+
+                        <input class="col-6" type="range" @bind-value:event="oninput" id="sizeRange" min="0" max="100" aria-label="size" @bind-value="playlistSize">
+
+                        <span class="nav-item col">@playlistSize</span>
+                         
+
+                        <span class="col" ></span>
+
+                    </div>
+                </div>
+
+                @foreach (var option in recOps.optionsActive)
+                {
+                <div class="container">
+                    <div class="row justify-content-center align-items-center text-center">
+
+                        <span class="text-capitalize col-4">@(option.Key.Replace("target_", ""))</span>
+
+                        <input class="col-6" disabled=@(!option.Value) type="range" @bind-value:event="oninput" id="sizeRange" min="0" max="@((recOps.optionsMaxs[option.Key] == 1) ? recOps.optionsMaxs[option.Key]*100 : recOps.optionsMaxs[option.Key])" aria-label="tempo" @bind-value="recOps.Options[option.Key]">
+                        
+                        
+                        @if (option.Value)
+                        {
+                            
+                            if (option.Key == "key")
+                            {
+                                <span class="nav-item col">@keys[(int)recOps.Options[option.Key]]</span>
+                            } else if (option.Key == "tempo")
+                            {
+                                <span class="nav-item col">@recOps.Options[option.Key]BPM</span>
+                            } else {
+                                <span class="nav-item col">@recOps.Options[option.Key]</span>
+                            }
+                        } else {
+                            <span class="nav-item col"></span>
+                        }
+                        
+                        <input class="col" type="checkbox" @bind-value="recOps.optionsActive[option.Key]" @bind-value:event="oninput" />
+                        
+                    </div>
+                </div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" @onclick=RegenerateWithSettings data-bs-dismiss="modal">Regenerate</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+@*Track List*@
+@if (playlist.Tracks != null && !loading)
+{
+    <div class="d-flex flex-column justify-content-around align-items-center">
+
+        <div class="d-flex flex-row align-items-around flex-wrap justify-content-center playlist-generate-form">
+            <div class="d-flex flex-column text-light text-center">
+                <p>Use the <img src="cog.png" style="width:15px" /> button to adjust generation settings</p>
+                <p>Use the <img src="regen.png" style="width:15px" /> button to regenerate</p>
+            </div>
+            <div class="input-group">
+                <input type="text" class="form-control" @bind-value=playlist.Name  aria-describedby="basic-addon2">
+                <div class="input-group-append">
+                    <button class="btn btn-secondary" @onclick=SavePlaylist type="button">Save</button>
+                </div>
+            </div>
+            <div class="d-flex w-100 d-row align-items-between justify-content-around m-3">
+                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#settingsModal">
+                        <image src="cog.png" style="width:25px;height:25px" />
+                    </button>
+                <button @onclick=RegenerateWithSettings class="btn btn-primary m-1"><image src="regen.png" style="width:25px;height:25px" /></button>
+            </div>
+        </div>
+
+        <div class="d-flex flex-row align-items-center flex-wrap justify-content-around">
+
+            @*Track Cards*@
+
+            @if(playlist.Tracks.Count > 0){
+                @foreach (var tr in playlist.Tracks)
+                {
+                    <div class="card m-2 w-25 h-25 text-center track-display">
+                        @if (tr.Album != null)
+                        {
+                            <img class="card-img-top" src="@tr.Album.ImageUrl" />
+                        }
+                
+                        <div class="card-body">
+                            <p>@tr.Name</p>
+                            <p>@tr.Artists[0].Name</p>
+                        </div>
+                    </div>
+                }
+            } else {
+                <h2 class="text-center">Could not find any tracks...</h2>
+            }
+        
+        </div>
+    </div>
+}
+
+
+@code {
+    bool _isAuthed;
+    bool optionsDisplayed;
+    bool noTracksFound;
+    bool loading;
+    private Playlist playlist = new Playlist();
+
+    private string playlistSeedId = "";
+    private string genreSeedId = "";
+    private List<string> seedTracks;
+    private List<string> seedArtists;
+    private List<string> seedGenres;
+
+    private string[] keys = new[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "A♭", "A", "B♭", "B" };
+    SpotifyClient spotify;
+
+    private Dictionary<string, float> generationOptions = new Dictionary<string, float>();
+    private RecomendationOptions recOps = new RecomendationOptions();
+
+    private int playlistSize = 20;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(navManager.Uri);
+        var maxLen = Math.Min(1, uri.Fragment.Length);
+        Dictionary<string, string> fragmentParams = uri.Fragment.Substring(maxLen)?
+          .Split("&", StringSplitOptions.RemoveEmptyEntries)?
+          .Select(param => param.Split("=", StringSplitOptions.RemoveEmptyEntries))?
+          .ToDictionary(param => param[0], param => param[1]) ?? new Dictionary<string, string>();
+
+        _isAuthed = fragmentParams.ContainsKey("access_token");
+        if (_isAuthed)
+        {
+            if (fragmentParams.ContainsKey("seed_artists")) seedArtists = fragmentParams["seed_artists"].Split(',').ToList();
+            if (fragmentParams.ContainsKey("seed_tracks")) seedTracks = fragmentParams["seed_tracks"].Split(',').ToList();
+            if (fragmentParams.ContainsKey("genre_seeds")) seedGenres = fragmentParams["genre_seeds"].Split(',').ToList();
+
+            if (fragmentParams.ContainsKey("playlist_id")) playlistSeedId = fragmentParams["playlist_id"];
+            if (fragmentParams.ContainsKey("genre_id")) genreSeedId = fragmentParams["genre_id"];
+            spotify = new SpotifyClient(fragmentParams["access_token"]);
+
+            if (!string.IsNullOrWhiteSpace(playlistSeedId)) 
+            {
+                seedTracks = await GetSeedTracksFromPlaylist(playlistSeedId);
+                await GenerateFromTracks(new RecommendationsRequest());
+            }
+            else if (seedGenres != null)
+            {
+                await GenerateFromGenre(new RecommendationsRequest());
+            } else if (seedArtists != null){
+                await GenerateFromSeedArtists(new RecommendationsRequest());
+            } else if (seedTracks != null){
+                await GenerateFromSeedTracks(new RecommendationsRequest());
+            }
+
+        }
+    }
+
+
+    private async Task GenerateFromPlaylist()
+    {
+        seedTracks = await GetSeedTracksFromPlaylist(playlistSeedId);
+        await GenerateFromTracks(new RecommendationsRequest());
+    }
+
+    private async Task GenerateFromSeedTracks(RecommendationsRequest recReq)
+    {
+        await GenerateFromTracks(recReq);
+    }
+
+    public async Task GenerateFromGenre(RecommendationsRequest recReq)
+    {
+        foreach(var genre in seedGenres)
+        {
+            recReq.SeedGenres.Add(genre);
+        }
+
+        recReq.BuildQueryParams();
+        recReq.BuildBodyParams();
+        var trackDeetsIds = new List<string>();
+
+        var generatedPlaylistJson = await spotify.Browse.GetRecommendations(recReq);
+        playlist.Tracks = new List<Track>();
+        playlist.Name = "New Playlist";
+        foreach (var track in generatedPlaylistJson.Tracks)
+        {
+            var newTrack = new Track();
+            newTrack.Artists = new List<Artist>();
+            newTrack.Name = track.Name;
+            newTrack.Id = track.Id;
+
+
+            foreach (var art in track.Artists)
+            {
+                newTrack.Artists.Add(new Artist() { Name = art.Name, Id = art.Id });
+            }
+
+            playlist.Tracks.Add(newTrack);
+            trackDeetsIds.Add(track.Id);
+        }
+        //    var audTrackReq = new TracksAudioFeaturesRequest(trackDeetsIds);
+        //    var trackDeetsRequest = await spotify.Tracks.GetSeveralAudioFeatures(audTrackReq);
+        //    float keyavg = 0;
+        //    float tempoAvg = 0;
+        //    foreach (var x in trackDeetsRequest.AudioFeatures)
+        //    {
+
+        //        tempoAvg += x.Tempo;
+        //        keyavg += x.Key;
+        //    }
+        //    Console.WriteLine("Temp: " + (tempoAvg / trackDeetsRequest.AudioFeatures.Count));
+        //    Console.WriteLine("Key Avg: " + (keyavg / trackDeetsRequest.AudioFeatures.Count));
+
+
+        if (playlist.Tracks.Count == 0)
+        {
+            noTracksFound = true;
+        }
+        else
+        {
+            noTracksFound = false;
+            var trackReq = new TracksRequest(trackDeetsIds);
+            var trackInfo = await spotify.Tracks.GetSeveral(trackReq);
+
+            foreach (var track in playlist.Tracks)
+            {
+                track.Album = new Album()
+                    {
+                        Name = trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Name
+                    };
+
+                if (trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Images.Count > 0)
+                {
+                    track.Album.ImageUrl = trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Images[0].Url;
+                }
+            }
+        }
+    }
+
+    private async Task GenerateFromTracks(RecommendationsRequest recReq)
+    {
+
+        foreach(var seed in seedTracks){
+            recReq.SeedTracks.Add(seed);
+        }
+        recReq.BuildQueryParams();
+        recReq.BuildBodyParams();
+        var trackDeetsIds = new List<string>();
+
+        var generatedPlaylistJson = await spotify.Browse.GetRecommendations(recReq);
+        playlist.Tracks = new List<Track>();
+        playlist.Name = "New Playlist";
+        foreach(var track in generatedPlaylistJson.Tracks)
+        {
+            var newTrack = new Track();
+            newTrack.Artists = new List<Artist>();
+            newTrack.Name = track.Name;
+            newTrack.Id = track.Id;
+
+
+            foreach (var art in track.Artists)
+            {
+                newTrack.Artists.Add(new Artist() { Name = art.Name, Id = art.Id });
+            }
+
+            playlist.Tracks.Add(newTrack);
+            trackDeetsIds.Add(track.Id);
+        }
+        // Track features
+        //var audTrackReq = new TracksAudioFeaturesRequest(trackDeetsIds);
+        //var trackDeetsRequest = await spotify.Tracks.GetSeveralAudioFeatures(audTrackReq);
+
+        if (playlist.Tracks.Count ==0 ){
+            noTracksFound = true;
+        } else {
+            noTracksFound = false;
+            var trackReq = new TracksRequest(trackDeetsIds);
+            var trackInfo = await spotify.Tracks.GetSeveral(trackReq);
+
+            foreach (var track in playlist.Tracks)
+            {
+                track.Album = new Album()
+                    {
+                        Name = trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Name
+                    };
+
+                if (trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Images.Count > 0)
+                {
+                    track.Album.ImageUrl = trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Images[0].Url;
+                }
+            }
+        }
+
+
+    }
+
+    private async Task GenerateFromSeedArtists(RecommendationsRequest recReq)
+    {
+
+        foreach(var seed in seedArtists){
+            recReq.SeedArtists.Add(seed);
+        }
+        recReq.BuildQueryParams();
+        recReq.BuildBodyParams();
+        var trackDeetsIds = new List<string>();
+
+        var generatedPlaylistJson = await spotify.Browse.GetRecommendations(recReq);
+        playlist.Tracks = new List<Track>();
+        playlist.Name = "New Playlist";
+        foreach(var track in generatedPlaylistJson.Tracks)
+        {
+            var newTrack = new Track();
+            newTrack.Artists = new List<Artist>();
+            newTrack.Name = track.Name;
+            newTrack.Id = track.Id;
+
+
+            foreach (var art in track.Artists)
+            {
+                newTrack.Artists.Add(new Artist() { Name = art.Name, Id = art.Id });
+            }
+
+            playlist.Tracks.Add(newTrack);
+            trackDeetsIds.Add(track.Id);
+        }
+
+        //Track DETAILS 
+
+        //var audTrackReq = new TracksAudioFeaturesRequest(trackDeetsIds);
+        //var trackDeetsRequest = await spotify.Tracks.GetSeveralAudioFeatures(audTrackReq);
+        //float keyavg = 0;
+        //float tempoAvg = 0;
+        //foreach (var x in trackDeetsRequest.AudioFeatures){
+
+        //    tempoAvg += x.Tempo;
+        //    keyavg += x.Key;
+        //}
+
+        if (playlist.Tracks.Count == 0)
+        {
+            noTracksFound = true;
+        }
+        else
+        {
+            noTracksFound = false;
+            var trackReq = new TracksRequest(trackDeetsIds);
+            var trackInfo = await spotify.Tracks.GetSeveral(trackReq);
+
+            foreach (var track in playlist.Tracks)
+            {
+                track.Album = new Album()
+                    {
+                        Name = trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Name
+                    };
+
+                if (trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Images.Count > 0)
+                {
+                    track.Album.ImageUrl = trackInfo.Tracks.Where(x => x.Id == track.Id).FirstOrDefault().Album.Images[0].Url;
+                }
+            }
+        }
+    }
+
+
+
+    public async Task RegenerateWithSettings()
+    {
+        if (!string.IsNullOrWhiteSpace(playlistSeedId))
+        {
+            seedTracks = await GetSeedTracksFromPlaylist(playlistSeedId);
+        } 
+
+        RecommendationsRequest recReq = new RecommendationsRequest();
+        recReq.Limit = playlistSize;
+
+
+        foreach(var option in recOps.optionsActive)
+        {
+            if (option.Value){
+                if (recOps.optionsMaxs[option.Key] == 1)
+                {
+                    recReq.Target.Add(option.Key, (recOps.Options[option.Key] / 100).ToString());
+                }
+                else
+                {
+                    recReq.Target.Add(option.Key, recOps.Options[option.Key].ToString());
+                }
+            }
+        }
+
+        foreach(var option in recOps.optionsActive)
+        {
+            if (option.Value){
+                if (recOps.optionsMaxs[option.Key] == 1)
+                {
+                    recReq.Min.Add(option.Key, ((recOps.Options[option.Key] / 100)-5).ToString());
+                    recReq.Max.Add(option.Key, ((recOps.Options[option.Key] / 100)+5).ToString());
+                }
+                else if (recOps.optionsMaxs[option.Key] == 11)
+                {
+                    recReq.Min.Add(option.Key, recOps.Options[option.Key].ToString());
+                    recReq.Max.Add(option.Key, recOps.Options[option.Key].ToString());
+                }
+                else
+                {
+                    recReq.Min.Add(option.Key, (recOps.Options[option.Key] - 5).ToString());
+                    recReq.Max.Add(option.Key, (recOps.Options[option.Key] + 5).ToString());
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(playlistSeedId))
+        {
+            await GenerateFromTracks(recReq);
+        } else if (seedGenres != null) {
+            await GenerateFromGenre(recReq);
+        } else if (seedArtists != null) {
+            await GenerateFromSeedArtists(recReq);
+        }
+        else if (seedTracks != null){
+            await GenerateFromSeedTracks(recReq);
+        } 
+
+    }
+
+    public async Task<List<string>> GetSeedTracksFromPlaylist(string playlistSeedId)
+    {
+        var generatedPlaylistJson = await spotify.Playlists.Get(playlistSeedId);
+        seedTracks = new List<string>();
+        var r = new Random();
+        var tracks = generatedPlaylistJson.Tracks.Items;
+        for (int i = 0; i < 4; i++)
+        {
+            var parsedTrack = (FullTrack) tracks[r.Next(0, tracks.Count - 1)].Track;
+            seedTracks.Add(parsedTrack.Id);
+        }
+        return seedTracks;
+    }
+
+    public async Task<List<string>> GetSeedTracksFromGenre(string genreSeedId)
+    {
+        var generatedPlaylistJson = await spotify.Playlists.Get(playlistSeedId);
+        seedTracks = new List<string>();
+        var r = new Random();
+        var tracks = generatedPlaylistJson.Tracks.Items;
+        for (int i = 0; i < 4; i++)
+        {
+            var parsedTrack = (FullTrack)tracks[r.Next(0, tracks.Count - 1)].Track;
+            seedTracks.Add(parsedTrack.Id);
+        }
+        return seedTracks;
+    }
+
+    public async Task SavePlaylist()
+    {
+        PlaylistCreateRequest pcr = new PlaylistCreateRequest(playlist.Name);
+
+
+        var user = await spotify.UserProfile.Current();
+        var newPlaylist = await spotify.Playlists.Create(user.Id, pcr);
+        Console.WriteLine(newPlaylist.Id);
+        var playlistTrackUris = new List<string>();
+        foreach(var track in playlist.Tracks)
+        {
+            playlistTrackUris.Add($"spotify:track:{track.Id}");
+        }
+        PlaylistAddItemsRequest pair = new PlaylistAddItemsRequest(playlistTrackUris);
+
+
+        var addedPlaylist = await spotify.Playlists.AddItems(newPlaylist.Id, pair);
+        PlaylistAdded();
+    }
+
+    public async Task PlaylistAdded(){
+        playlist.Name = "New Playlist";
+        playlist.Tracks = null;
+        loading = true;
+        await RegenerateWithSettings();
+        Console.WriteLine($"Playlist {playlist.Name} succesfully added");
+        loading = false;
+    }
+
+}

@@ -1,0 +1,105 @@
+﻿@page "/genres"
+@using SpotNet.Models
+@using SpotifyAPI.Web
+@inject NavigationManager navManager;
+
+<div class="welcome-text text-center">
+    <h1>Genres</h1>
+    <p>Select up to five genres and click <img src="regen.png" style="width:15px;"/> to generate a new playlist!</p>
+</div>
+@if (genres != null)
+{
+    <div class="d-flex flex-column justify-content-center align-items-center">
+        @if (selectedGenres.Count > 5 || selectedGenres.Count < 1){
+            <a class="btn btn-secondary m-3"><img src="regen.png" /></a>
+        } else {
+            <a class="btn btn-primary m-3" href="@GeneratePlaylist()"><img src="regen.png" /></a>
+        }
+        
+        <div class="d-flex flex-row flex-wrap justify-content-center align-items-center genre-container">
+
+            @foreach (var genre in genres)
+            {
+                <div class="m2">
+                    @if (genre.IsSelected)
+                    {
+                        <button @onclick="() => ToggleGenre(genre)" class="btn btn-primary text-capitalize genre-option">@genre.Name</button>
+                    } else {
+                        <button @onclick="() => ToggleGenre(genre)" class="btn btn-outline-primary text-capitalize genre-option">@genre.Name</button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+} else
+{
+<div class="d-flex align-items-center justify-content-center h-100">
+    <div class="spinner-grow text-primary" role="status">
+        <span class="sr-only">Loading...</span>
+    </div>
+</div>
+}
+@code {
+    bool _isAuthed;
+    string access_token;
+    SpotifyClient spotify;
+    List<Genre> genres;
+    List<string> selectedGenres = new List<string>();
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(navManager.Uri);
+        var maxLen = Math.Min(1, uri.Fragment.Length);
+        Dictionary<string, string> fragmentParams = uri.Fragment.Substring(maxLen)?
+          .Split("&", StringSplitOptions.RemoveEmptyEntries)?
+          .Select(param => param.Split("=", StringSplitOptions.RemoveEmptyEntries))?
+          .ToDictionary(param => param[0], param => param[1]) ?? new Dictionary<string, string>();
+
+        _isAuthed = fragmentParams.ContainsKey("access_token");
+        if (_isAuthed)
+        {
+            spotify = new SpotifyClient(fragmentParams["access_token"]);
+            access_token = fragmentParams["access_token"];
+            await GetGenres();
+        }
+    }
+
+    public void ToggleGenre(Genre genre)
+    {
+        genre.IsSelected = !genre.IsSelected;
+        selectedGenres = new List<string>();
+        foreach(var gen in genres){
+            if (gen.IsSelected){
+                selectedGenres.Add(gen.Name);
+            }
+        }
+    }
+
+    public string GeneratePlaylist()
+    {
+        if (genres == null) return "";
+        var genreList = new List<string>();
+        var url = $"/generated#access_token={access_token}&&genre_seeds=";
+        foreach(var genre in genres){
+            if (genre.IsSelected){
+                genreList.Add(genre.Name);
+                url += $"{genre.Name},";
+            }
+        }
+        if (url.Last() == ',') 
+        {
+            url = url.Remove(url.Length - 1);
+        }
+
+        return url;
+    }
+
+    public async Task GetGenres()
+    {
+        var genresResponse = await spotify.Browse.GetRecommendationGenres();
+        genres = new List<Genre>();
+        foreach(var genre in genresResponse.Genres)
+        {
+            genres.Add(new Genre() { Name = genre });
+        }
+    }
+}

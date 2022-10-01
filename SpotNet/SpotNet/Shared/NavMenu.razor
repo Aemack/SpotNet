@@ -1,0 +1,116 @@
+﻿@using SpotifyAPI.Web
+@inject NavigationManager navManager
+
+@if (_isAuthed)
+{
+    @if(showGenerationSeedOptions){
+        <div class="sidebar d-flex flex-column position-fixed justify-content-center align-items-center  seed-nav" style="height:100vh">
+            <div class="justify-content-start align-items-start">
+                <button @onclick=ToggleNav class="btn btn-danger">X</button>
+            </div>
+        <nav class="d-flex flex-column justify-content-around align-items-center h-100">
+            @if (_isAuthed)
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="@userLink">
+                        <span class="oi oi-plus" aria-hidden="true"></span> User
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="@playlistsLink">
+                        <span class="oi oi-plus" aria-hidden="true"></span> Playlists
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="@genresLink">
+                        <span class="oi oi-plus" aria-hidden="true"></span> Genres
+                    </NavLink>
+                </div>
+            }
+        </nav>
+    </div>
+
+    } else {
+        <div class="sidebar d-flex flex-column position-fixed justify-content-center align-items-center  seed-nav-out" style="height:100vh">
+            <div class="justify-content-start align-items-start">
+                <button @onclick=ToggleNav class="btn btn-danger">X</button>
+            </div>
+            <nav class="d-flex flex-column justify-content-around align-items-center h-100">
+                @if (_isAuthed)
+                {
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="@userLink">
+                            <span class="oi oi-plus" aria-hidden="true"></span> User
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="@playlistsLink">
+                            <span class="oi oi-plus" aria-hidden="true"></span> Playlists
+                        </NavLink>
+                    </div>
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="@genresLink">
+                            <span class="oi oi-plus" aria-hidden="true"></span> Genres
+                        </NavLink>
+                    </div>
+                }
+            </nav>
+        </div>
+
+
+        <div class="d-flex flex-column position-fixed justify-content-center align-items-center nav-toggler" style="height:100vh">
+            <button @onclick=ToggleNav class="btn btn-primary"><img src="cog.png/"></button>
+        </div>
+    }
+}
+@code {
+    private bool collapseNavMenu = true;
+    private bool showGenerationSeedOptions;
+
+    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+
+    private PrivateUser _me;
+    public string _accessToken;
+    public string userLink;
+    public string playlistsLink;
+    public string genresLink;
+    bool _isAuthed;
+    private int? _totalPlaylistCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!_isAuthed)
+        {
+            var uri = new Uri(navManager.Uri);
+            var maxLen = Math.Min(1, uri.Fragment.Length);
+            Dictionary<string, string> fragmentParams = uri.Fragment.Substring(maxLen)?
+              .Split("&", StringSplitOptions.RemoveEmptyEntries)?
+              .Select(param => param.Split("=", StringSplitOptions.RemoveEmptyEntries))?
+              .ToDictionary(param => param[0], param => param[1]) ?? new Dictionary<string, string>();
+
+            _isAuthed = fragmentParams.ContainsKey("access_token");
+            if (_isAuthed)
+            {
+                var spotify = new SpotifyClient(fragmentParams["access_token"]);
+
+                _me = await spotify.UserProfile.Current();
+                _totalPlaylistCount = (await spotify.Playlists.CurrentUsers()).Total;
+                _accessToken = fragmentParams["access_token"];
+                userLink = $"user#access_token={_accessToken}";
+                playlistsLink = $"playlists#access_token={_accessToken}";
+                genresLink = $"genres#access_token={_accessToken}";
+            }
+        }
+    }
+
+    private void ToggleNavMenu()
+    {
+        collapseNavMenu = !collapseNavMenu;
+    }
+
+    public void ToggleNav()
+    {
+        showGenerationSeedOptions = !showGenerationSeedOptions;
+
+    }
+}
